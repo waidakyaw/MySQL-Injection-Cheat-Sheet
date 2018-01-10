@@ -1,4 +1,4 @@
-MySQL Injection Cheat Sheet (Collection )
+MySQL Injection Cheat Sheet 
 
 Introduction
 
